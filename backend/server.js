@@ -1,4 +1,3 @@
-// backend/server.js
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -6,11 +5,25 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
 const app = express();
+
+// ==================== CONFIGURACIÓN CORS CORREGIDA ====================
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:5173'],
-  credentials: true
+  origin: [
+    'http://localhost:3000', 
+    'http://localhost:5173',
+    'https://pros-pro.vercel.app',  // ← TU FRONTEND EN VERCEL
+    'https://pros-pro-api.vercel.app' // ← TU BACKEND EN VERCEL (por si necesitas)
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
+
+// Para preflight requests
+app.options('*', cors());
+
 app.use(express.json());
+
 // ==================== CONEXIÓN PRINCIPAL (usuarios) ====================
 let mainConnection;
 try {
@@ -28,6 +41,7 @@ try {
   console.error('No se pudo conectar a MongoDB Atlas:', error);
   process.exit(1);
 }
+
 // ==================== MODELO DE USUARIO (CON CAMPOS DE TIENDA) ====================
 const userSchema = new mongoose.Schema({
   nombre: { type: String, required: true },
@@ -55,22 +69,28 @@ const userSchema = new mongoose.Schema({
   tiendaRFC: String,
   tiendaMensajeTicket: { type: String, default: '¡Gracias por su compra! Vuelva pronto :)' }
 });
+
 const User = mainConnection.model('User', userSchema);
+
 // Cache de conexiones por tienda
 global.userConnections = {};
+
 // ==================== OBTENER MODELOS DE LA TIENDA DEL USUARIO ====================
 const getUserModels = async (databaseName) => {
   console.log(`🔍 Buscando modelos para tienda: ${databaseName}`);
+  
   if (!databaseName) {
     throw new Error('Nombre de base de datos no proporcionado');
   }
+
   if (global.userConnections[databaseName]) {
     console.log(`🔄 Usando conexión en cache para: ${databaseName}`);
     return global.userConnections[databaseName];
   }
+
   console.log(`🚀 Creando nueva conexión para: ${databaseName}`);
   const dbURI = process.env.MONGODB_URI.replace(/(mongodb\+srv:\/\/[^/]+\/)[^?]*/, `$1${databaseName}`);
- 
+
   try {
     const connection = mongoose.createConnection(dbURI, {
       useNewUrlParser: true,
@@ -78,12 +98,15 @@ const getUserModels = async (databaseName) => {
       serverSelectionTimeoutMS: 10000,
       socketTimeoutMS: 45000,
     });
+
     await new Promise((resolve, reject) => {
       connection.once('open', resolve);
       connection.on('error', reject);
       setTimeout(() => reject(new Error(`Timeout al conectar a ${databaseName}`)), 10000);
     });
+
     console.log(`✅ Conectado exitosamente a la tienda: ${databaseName}`);
+
     // Definir esquemas
     const productSchema = new mongoose.Schema({
       nombre: { type: String, required: true },
@@ -101,10 +124,12 @@ const getUserModels = async (databaseName) => {
       fechaActualizacion: { type: Date, default: Date.now },
       estado: { type: String, default: 'activo', enum: ['activo', 'inactivo', 'agotado'] }
     });
+
     productSchema.index({ nombre: 'text', descripcion: 'text' });
     productSchema.index({ codigoInterno: 1 });
     productSchema.index({ codigoBarra: 1 });
     productSchema.index({ categoria: 1 });
+
     const saleSchema = new mongoose.Schema({
       codigo: { type: String, required: true, unique: true },
       usuarioId: { type: mongoose.Schema.Types.ObjectId, required: true },
@@ -139,6 +164,7 @@ const getUserModels = async (databaseName) => {
       cambio: { type: Number, default: 0 },
       referenciaPago: String
     });
+
     const clientSchema = new mongoose.Schema({
       nombre: { type: String, required: true },
       apellido: String,
@@ -154,6 +180,7 @@ const getUserModels = async (databaseName) => {
       tipoCliente: { type: String, default: 'ocasional', enum: ['ocasional', 'frecuente', 'premium', 'corporativo'] },
       notas: String
     });
+
     const categorySchema = new mongoose.Schema({
       nombre: { type: String, required: true, unique: true },
       descripcion: String,
@@ -162,6 +189,7 @@ const getUserModels = async (databaseName) => {
       fechaCreacion: { type: Date, default: Date.now },
       estado: { type: String, default: 'activo', enum: ['activo', 'inactivo'] }
     });
+
     // Crear modelos
     const models = {
       connection,
@@ -170,6 +198,7 @@ const getUserModels = async (databaseName) => {
       Client: connection.model('Client', clientSchema),
       Category: connection.model('Category', categorySchema)
     };
+
     global.userConnections[databaseName] = models;
     console.log(`💾 Modelos guardados en cache para: ${databaseName}`);
     return models;
@@ -178,12 +207,27 @@ const getUserModels = async (databaseName) => {
     throw error;
   }
 };
+
+// ==================== RUTAS PÚBLICAS ====================
+
+// Ruta de prueba
+app.get('/api/test', (req, res) => {
+  res.json({
+    success: true,
+    message: 'API funcionando en Vercel',
+    timestamp: new Date().toISOString(),
+    version: '1.0.0'
+  });
+});
+
 // ==================== REGISTRO ====================
 app.post('/api/register', async (req, res) => {
   try {
     const { nombre, apellido, email = '', telefono = '', cargo, usuario, password } = req.body;
+    
     // LOG 1: Mostrar datos recibidos
     console.log('📥 Datos recibidos en registro:', { nombre, apellido, email, telefono, cargo, usuario });
+    
     if (!nombre || !apellido || !cargo || !usuario || !password) {
       console.log('❌ Faltan campos obligatorios');
       return res.status(400).json({
@@ -191,6 +235,7 @@ app.post('/api/register', async (req, res) => {
         error: 'Faltan campos obligatorios: nombre, apellido, cargo, usuario y password'
       });
     }
+
     // Verificar si usuario o email ya existen
     console.log(`🔍 Verificando si ya existe usuario "${usuario}" o email "${email || 'no-email'}"`);
     const exists = await User.findOne({
@@ -199,6 +244,7 @@ app.post('/api/register', async (req, res) => {
       console.error('❌ Error buscando usuario existente:', err);
       return null;
     });
+
     if (exists) {
       console.log('⚠️ Usuario o email ya existe:', exists.usuario || exists.email);
       return res.status(400).json({
@@ -206,12 +252,15 @@ app.post('/api/register', async (req, res) => {
         error: 'Usuario o email ya existe'
       });
     }
+
     // Crear hash de password
     console.log('🔑 Generando hash de contraseña...');
     const hashedPassword = await bcrypt.hash(password, 12);
+
     // Crear nombre de base de datos único
     const databaseName = `tienda_${usuario.toLowerCase().replace(/[^a-z0-9]/g, '')}_${Date.now()}`;
     console.log(`📦 Nombre de tienda generado: ${databaseName}`);
+
     // Crear usuario
     const newUser = new User({
       nombre,
@@ -223,6 +272,7 @@ app.post('/api/register', async (req, res) => {
       password: hashedPassword,
       databaseName
     });
+
     // LOG CLAVE: Antes y después del save()
     console.log('💾 Intentando guardar usuario en la base principal...');
     try {
@@ -236,21 +286,26 @@ app.post('/api/register', async (req, res) => {
         details: process.env.NODE_ENV === 'development' ? saveError.message : undefined
       });
     }
+
     // === CREAR LA BASE DE DATOS FÍSICAMENTE ===
     const dbURI = process.env.MONGODB_URI.replace(/(mongodb\+srv:\/\/[^/]+\/)[^?]*/, `$1${databaseName}`);
     console.log(`🚀 Intentando conectar a nueva base de datos: ${dbURI}`);
+
     try {
       const tempConn = mongoose.createConnection(dbURI, {
         useNewUrlParser: true,
         useUnifiedTopology: true,
       });
+
       await new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
           reject(new Error('Timeout al conectar a la nueva base de datos (10s)'));
         }, 10000);
+
         tempConn.once('open', async () => {
           clearTimeout(timeout);
           console.log(`✅ Conexión exitosa a la nueva base: ${databaseName}`);
+          
           try {
             // Crear categoría General
             const Category = tempConn.model('Category', new mongoose.Schema({
@@ -261,6 +316,7 @@ app.post('/api/register', async (req, res) => {
               fechaCreacion: { type: Date, default: Date.now },
               estado: { type: String, default: 'activo', enum: ['activo', 'inactivo'] }
             }));
+
             const categoriaExiste = await Category.findOne({ nombre: 'General' });
             if (!categoriaExiste) {
               await Category.create({
@@ -270,32 +326,34 @@ app.post('/api/register', async (req, res) => {
               });
               console.log('✅ Categoría "General" creada');
             }
+
             // Registrar esquema de productos
-           // Registrar esquema de productos
-const productSchema = new mongoose.Schema({
-  nombre: { type: String, required: true },
-  descripcion: String,
-  precio: { type: Number, required: true, min: 0 },
-  costo: { type: Number, required: true, min: 0 },
-  stock: { type: Number, required: true, min: 0, default: 0 },
-  stockMinimo: { type: Number, default: 5 },
-  categoria: { type: String, required: true },
-  codigoBarra: { type: String, unique: true, sparse: true },
-  codigoInterno: { type: String, unique: true, sparse: true },
-  imagen: String,
-  proveedor: String,
-  fechaCreacion: { type: Date, default: Date.now },
-  fechaActualizacion: { type: Date, default: Date.now },
-  estado: { type: String, default: 'activo', enum: ['activo', 'inactivo', 'agotado'] }
-});
-// AÑADE LOS ÍNDICES AQUÍ TAMBIÉN:
-productSchema.index({ nombre: 'text', descripcion: 'text' });
-productSchema.index({ codigoInterno: 1 });
-productSchema.index({ codigoBarra: 1 });
-productSchema.index({ categoria: 1 });
-productSchema.index({ estado: 1 });
-tempConn.model('Product', productSchema);
-console.log('✅ Esquema de productos registrado');
+            const productSchema = new mongoose.Schema({
+              nombre: { type: String, required: true },
+              descripcion: String,
+              precio: { type: Number, required: true, min: 0 },
+              costo: { type: Number, required: true, min: 0 },
+              stock: { type: Number, required: true, min: 0, default: 0 },
+              stockMinimo: { type: Number, default: 5 },
+              categoria: { type: String, required: true },
+              codigoBarra: { type: String, unique: true, sparse: true },
+              codigoInterno: { type: String, unique: true, sparse: true },
+              imagen: String,
+              proveedor: String,
+              fechaCreacion: { type: Date, default: Date.now },
+              fechaActualizacion: { type: Date, default: Date.now },
+              estado: { type: String, default: 'activo', enum: ['activo', 'inactivo', 'agotado'] }
+            });
+
+            productSchema.index({ nombre: 'text', descripcion: 'text' });
+            productSchema.index({ codigoInterno: 1 });
+            productSchema.index({ codigoBarra: 1 });
+            productSchema.index({ categoria: 1 });
+            productSchema.index({ estado: 1 });
+
+            tempConn.model('Product', productSchema);
+            console.log('✅ Esquema de productos registrado');
+
             // Documento de inicialización
             const Init = tempConn.model('Init', new mongoose.Schema({
               tienda: String,
@@ -303,12 +361,14 @@ console.log('✅ Esquema de productos registrado');
               fechaCreacion: { type: Date, default: Date.now },
               version: { type: String, default: '1.0.0' }
             }));
+
             await Init.create({
               tienda: databaseName,
               usuario: usuario,
               fechaCreacion: new Date(),
               version: '1.0.0'
             });
+
             console.log(`✅ Tienda inicializada completamente: ${databaseName}`);
             tempConn.close();
             resolve();
@@ -318,12 +378,14 @@ console.log('✅ Esquema de productos registrado');
             reject(initError);
           }
         });
+
         tempConn.on('error', (err) => {
           clearTimeout(timeout);
           console.error('❌ Error de conexión a nueva base de datos:', err.message);
           reject(err);
         });
       });
+
       console.log(`🏪 ¡Tienda creada exitosamente para ${usuario}!`);
       res.status(201).json({
         success: true,
@@ -334,17 +396,21 @@ console.log('✅ Esquema de productos registrado');
           databaseName: newUser.databaseName
         }
       });
+
     } catch (dbError) {
       console.error('❌ Error grave al crear la base de datos de la tienda:', dbError.message || dbError);
+      
       // Rollback: eliminar usuario creado
       await User.deleteOne({ _id: newUser._id }).catch(err => {
         console.error('❌ Error en rollback (eliminando usuario):', err);
       });
+
       res.status(500).json({
         success: false,
         error: 'Error al crear la tienda. Se revirtió la creación del usuario.'
       });
     }
+
   } catch (error) {
     console.error('❌ Error inesperado en registro:', error);
     res.status(500).json({
@@ -354,13 +420,14 @@ console.log('✅ Esquema de productos registrado');
     });
   }
 });
-// ==================== LOGIN (ACTUALIZADO CON DATOS DE TIENDA) ====================
-// ==================== LOGIN CORREGIDO ====================
+
+// ==================== LOGIN ====================
 app.post('/api/login', async (req, res) => {
   try {
     const { username, password } = req.body;
     console.log(`🔐 Intento de login para: ${username || 'undefined'}`);
     console.log('📥 Datos recibidos:', req.body);
+
     // Validación básica de entrada
     if (!username || !password) {
       console.log('❌ Faltan credenciales en la solicitud');
@@ -369,6 +436,7 @@ app.post('/api/login', async (req, res) => {
         error: 'Usuario y contraseña son requeridos'
       });
     }
+
     // BUSQUEDA MÁS DETALLADA
     console.log(`🔍 Buscando usuario con: ${username}`);
    
@@ -380,20 +448,17 @@ app.post('/api/login', async (req, res) => {
         { nombre: username.trim() }
       ]
     });
+
     if (!user) {
       console.log(`❌ Usuario NO encontrado: ${username}`);
-      console.log('🔍 Buscando todos los usuarios en la base de datos...');
-     
-      // Listar todos los usuarios para debug
-      const allUsers = await User.find({}).select('usuario email nombre');
-      console.log('📋 Todos los usuarios registrados:', allUsers);
-     
       return res.status(401).json({
         success: false,
         error: 'Credenciales incorrectas - Usuario no encontrado'
       });
     }
+
     console.log(`✅ Usuario encontrado: ${user.usuario} (Email: ${user.email})`);
+
     // Verificar contraseña
     const isValidPassword = await bcrypt.compare(password, user.password);
     if (!isValidPassword) {
@@ -403,6 +468,7 @@ app.post('/api/login', async (req, res) => {
         error: 'Credenciales incorrectas'
       });
     }
+
     // Verificar estado del usuario
     if (user.estado !== 'activo') {
       console.log(`🚫 Usuario inactivo/suspendido: ${user.usuario} (${user.estado})`);
@@ -411,6 +477,7 @@ app.post('/api/login', async (req, res) => {
         error: 'Usuario inactivo o suspendido'
       });
     }
+
     // Verificar que tenga databaseName
     if (!user.databaseName) {
       console.log(`⚠️ Usuario sin databaseName: ${user.usuario}`);
@@ -419,6 +486,7 @@ app.post('/api/login', async (req, res) => {
         error: 'Error en la configuración de la cuenta'
       });
     }
+
     // Generar token JWT
     const token = jwt.sign(
       {
@@ -429,7 +497,9 @@ app.post('/api/login', async (req, res) => {
       process.env.JWT_SECRET || 'fallback_secret_key_for_development',
       { expiresIn: '24h' }
     );
+
     console.log(`✅ Login exitoso: ${user.usuario} (Tienda: ${user.databaseName})`);
+
     // Respuesta exitosa con datos del usuario
     res.json({
       success: true,
@@ -459,6 +529,7 @@ app.post('/api/login', async (req, res) => {
         tiendaMensajeTicket: user.tiendaMensajeTicket || '¡Gracias por su compra! Vuelva pronto :)'
       }
     });
+
   } catch (error) {
     console.error('❌ Error inesperado en login:', error);
     res.status(500).json({
@@ -467,6 +538,10 @@ app.post('/api/login', async (req, res) => {
     });
   }
 });
+
+// ... [EL RESTO DEL CÓDIGO SIGUE IGUAL DESDE AQUÍ HACIA ABAJO] ...
+
+// (Mantén todo el resto del código igual desde la línea 150 en adelante)
 // ==================== RUTA TEMPORAL PARA DEPURACIÓN ====================
 app.get('/api/debug/users', async (req, res) => {
   try {
