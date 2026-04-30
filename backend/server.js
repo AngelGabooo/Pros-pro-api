@@ -105,18 +105,32 @@ global.userConnections = {};
 // ==================== OBTENER MODELOS DE LA TIENDA DEL USUARIO ====================
 const getUserModels = async (databaseName) => {
   console.log(`🔍 Buscando modelos para tienda: ${databaseName}`);
-  
+ 
   if (!databaseName) {
     throw new Error('Nombre de base de datos no proporcionado');
   }
-
   if (global.userConnections[databaseName]) {
     console.log(`🔄 Usando conexión en cache para: ${databaseName}`);
     return global.userConnections[databaseName];
   }
-
   console.log(`🚀 Creando nueva conexión para: ${databaseName}`);
-  const dbURI = process.env.MONGODB_URI.replace(/(mongodb\+srv:\/\/[^/]+\/)[^?]*/, `$1${databaseName}`);
+
+  // ==================== CORRECCIÓN PRINCIPAL ====================
+  let dbURI = process.env.MONGODB_URI;
+
+  // Reemplazo más robusto para URIs de MongoDB Atlas (mongodb+srv)
+  if (dbURI.includes('/?')) {
+    dbURI = dbURI.replace('/?', `/${databaseName}?`);
+  } else if (dbURI.includes('?')) {
+    dbURI = dbURI.replace('?', `/${databaseName}?`);
+  } else if (dbURI.endsWith('/')) {
+    dbURI += databaseName;
+  } else {
+    dbURI += '/' + databaseName;
+  }
+
+  console.log(`🔗 URI generada para la tienda: ${dbURI.replace(/:([^@]+)@/, ':****@')}`);
+  // ============================================================
 
   try {
     const connection = mongoose.createConnection(dbURI, {
@@ -125,15 +139,12 @@ const getUserModels = async (databaseName) => {
       serverSelectionTimeoutMS: 10000,
       socketTimeoutMS: 45000,
     });
-
     await new Promise((resolve, reject) => {
       connection.once('open', resolve);
       connection.on('error', reject);
       setTimeout(() => reject(new Error(`Timeout al conectar a ${databaseName}`)), 10000);
     });
-
     console.log(`✅ Conectado exitosamente a la tienda: ${databaseName}`);
-
     // Definir esquemas
     const productSchema = new mongoose.Schema({
       nombre: { type: String, required: true },
@@ -151,12 +162,10 @@ const getUserModels = async (databaseName) => {
       fechaActualizacion: { type: Date, default: Date.now },
       estado: { type: String, default: 'activo', enum: ['activo', 'inactivo', 'agotado'] }
     });
-
     productSchema.index({ nombre: 'text', descripcion: 'text' });
     productSchema.index({ codigoInterno: 1 });
     productSchema.index({ codigoBarra: 1 });
     productSchema.index({ categoria: 1 });
-
     const saleSchema = new mongoose.Schema({
       codigo: { type: String, required: true, unique: true },
       usuarioId: { type: mongoose.Schema.Types.ObjectId, required: true },
@@ -191,7 +200,6 @@ const getUserModels = async (databaseName) => {
       cambio: { type: Number, default: 0 },
       referenciaPago: String
     });
-
     const clientSchema = new mongoose.Schema({
       nombre: { type: String, required: true },
       apellido: String,
@@ -207,7 +215,6 @@ const getUserModels = async (databaseName) => {
       tipoCliente: { type: String, default: 'ocasional', enum: ['ocasional', 'frecuente', 'premium', 'corporativo'] },
       notas: String
     });
-
     const categorySchema = new mongoose.Schema({
       nombre: { type: String, required: true, unique: true },
       descripcion: String,
@@ -216,7 +223,6 @@ const getUserModels = async (databaseName) => {
       fechaCreacion: { type: Date, default: Date.now },
       estado: { type: String, default: 'activo', enum: ['activo', 'inactivo'] }
     });
-
     // Crear modelos
     const models = {
       connection,
@@ -225,7 +231,6 @@ const getUserModels = async (databaseName) => {
       Client: connection.model('Client', clientSchema),
       Category: connection.model('Category', categorySchema)
     };
-
     global.userConnections[databaseName] = models;
     console.log(`💾 Modelos guardados en cache para: ${databaseName}`);
     return models;
