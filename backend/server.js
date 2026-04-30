@@ -13,6 +13,7 @@ app.use(cors({
     'http://localhost:5173',
     'https://pros-pro.vercel.app',  // ← TU FRONTEND EN VERCEL
     'https://pros-pro-api.vercel.app', // ← TU BACKEND EN VERCEL (por si necesitas)
+    'https://pros-pro.vercel.app',
     'https://pros-pro.vercel.app'
   ],
   credentials: true,
