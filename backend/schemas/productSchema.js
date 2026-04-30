@@ -18,7 +18,6 @@ module.exports = new mongoose.Schema({
     type: String, 
     unique: true, 
     sparse: true
-    // ← ELIMINA required: true AQUÍ
   },
   imagen: String,
   proveedor: String,

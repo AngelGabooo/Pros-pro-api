@@ -26,21 +26,54 @@ app.use(express.json());
 
 // ==================== CONEXIÓN PRINCIPAL (usuarios) ====================
 let mainConnection;
-try {
-  mainConnection = mongoose.createConnection(process.env.MONGODB_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
+let User; // Modelo global
+
+const connectDB = async () => {
+  try {
+    const uri = process.env.MONGODB_URI;
+    if (!uri) {
+      console.error('❌ MONGODB_URI no está definida');
+      process.exit(1);
+    }
+
+    console.log('🔄 Intentando conectar a MongoDB Atlas...');
+    console.log('🔗 URI:', uri.replace(/:([^@]+)@/, ':****@'));
+
+    mainConnection = await mongoose.createConnection(uri, {
+      serverSelectionTimeoutMS: 25000,
+      socketTimeoutMS: 60000,
+    });
+
+    console.log('✅ ¡Conectado exitosamente a la base principal de usuarios!');
+
+    User = mainConnection.model('User', userSchema);
+    console.log('✅ Modelo "User" creado correctamente');
+
+    startServer();
+
+  } catch (error) {
+    console.error('\n❌ Error al conectar a MongoDB Atlas:');
+    console.error('Mensaje:', error.message);
+
+    if (error.code === 8000 || error.message.includes('bad auth')) {
+      console.error('\n🔴 ERROR DE AUTENTICACIÓN');
+      console.error('   La contraseña es incorrecta o el usuario no tiene permisos.');
+      console.error('   → Regenera la contraseña en MongoDB Atlas > Database Access');
+    }
+    process.exit(1);
+  }
+};
+
+const startServer = () => {
+  const PORT = process.env.PORT || 5000;
+  app.listen(PORT, () => {
+    console.log(`\n🚀 Servidor corriendo correctamente en http://localhost:${PORT}`);
+    console.log('✅ Sistema POS Multi-Tenant listo para usar\n');
   });
-  mainConnection.on('connected', () => {
-    console.log('✅ Conectado a la base principal de usuarios');
-  });
-  mainConnection.on('error', (err) => {
-    console.error('❌ Error en base principal:', err);
-  });
-} catch (error) {
-  console.error('No se pudo conectar a MongoDB Atlas:', error);
-  process.exit(1);
-}
+};
+
+// ================ INICIAR TODO ================
+connectDB();
 
 // ==================== MODELO DE USUARIO (CON CAMPOS DE TIENDA) ====================
 const userSchema = new mongoose.Schema({
@@ -70,7 +103,6 @@ const userSchema = new mongoose.Schema({
   tiendaMensajeTicket: { type: String, default: '¡Gracias por su compra! Vuelva pronto :)' }
 });
 
-const User = mainConnection.model('User', userSchema);
 
 // Cache de conexiones por tienda
 global.userConnections = {};
@@ -539,7 +571,6 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// ... [EL RESTO DEL CÓDIGO SIGUE IGUAL DESDE AQUÍ HACIA ABAJO] ...
 
 // (Mantén todo el resto del código igual desde la línea 150 en adelante)
 // ==================== RUTA TEMPORAL PARA DEPURACIÓN ====================
@@ -1720,8 +1751,9 @@ app.put('/api/sales/:id/cancel', authenticateAndLoadModels, async (req, res) => 
     });
   }
 });
+
 // ==================== RUTAS DE DASHBOARD ====================
-// GET /api/dashboard/stats - Estadísticas principales del dashboard
+// GET /api/dashboard/stats - Estadísticas principales del dashboard      //GET /api/dashboard/stados Pasa parametros de fecha de inicio y fin pero opcionales
 app.get('/api/dashboard/stats', authenticateAndLoadModels, async (req, res) => {
   try {
     console.log(`📊 Obteniendo estadísticas para dashboard de: ${req.user.databaseName}`);
@@ -1731,7 +1763,8 @@ app.get('/api/dashboard/stats', authenticateAndLoadModels, async (req, res) => {
     manana.setDate(manana.getDate() + 1);
     const ayer = new Date(hoy);
     ayer.setDate(ayer.getDate() - 1);
-    // 1. Ventas de hoy
+
+    // 1. Ventas de hoy   //Toma todas las ventas del dia de hoy y las manda directamente a la Api que responde por medio de res.json que esta conectado al backend en el apartado de categorySchema
     const ventasHoy = await req.models.Sale.aggregate([
       {
         $match: {
@@ -1747,6 +1780,7 @@ app.get('/api/dashboard/stats', authenticateAndLoadModels, async (req, res) => {
         }
       }
     ]);
+
     // 2. Ventas de ayer para cambio %
     const ventasAyer = await req.models.Sale.aggregate([
       {
@@ -1767,6 +1801,7 @@ app.get('/api/dashboard/stats', authenticateAndLoadModels, async (req, res) => {
     const cambioPorcentual = montoAyer > 0
       ? ((montoHoy - montoAyer) / montoAyer * 100).toFixed(1)
       : (montoHoy > 0 ? 100 : 0);
+
     // 3. Productos vendidos hoy (unidades)
     const productosVendidosHoy = await req.models.Sale.aggregate([
       {
@@ -1775,6 +1810,7 @@ app.get('/api/dashboard/stats', authenticateAndLoadModels, async (req, res) => {
       { $unwind: "$items" },
       { $group: { _id: null, cantidad: { $sum: "$items.cantidad" } } }
     ]);
+
     // 4. Clientes únicos hoy
     const clientesAtendidosHoy = await req.models.Sale.aggregate([
       {
@@ -1797,15 +1833,19 @@ app.get('/api/dashboard/stats', authenticateAndLoadModels, async (req, res) => {
         ]
       }
     });
+    
     // 6. Productos sin stock
     const productosSinStock = await req.models.Product.countDocuments({
       estado: 'activo',
       stock: 0
     });
+
     // 7. Total productos activos
     const totalProductos = await req.models.Product.countDocuments({ estado: 'activo' });
     // 8. Total clientes
+
     const totalClientes = await req.models.Client.countDocuments();
+
     // 9. Ventas del mes
     const inicioMes = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
     const ventasMes = await req.models.Sale.aggregate([
@@ -1820,6 +1860,7 @@ app.get('/api/dashboard/stats', authenticateAndLoadModels, async (req, res) => {
         }
       }
     ]);
+
     // 10. Ventas recientes (hoy)
     const ventasRecientes = await req.models.Sale.find({
       fechaVenta: { $gte: hoy, $lt: manana },
@@ -1828,6 +1869,7 @@ app.get('/api/dashboard/stats', authenticateAndLoadModels, async (req, res) => {
       .sort({ fechaVenta: -1 })
       .limit(10)
       .lean();
+
     // 11. Alertas de stock bajo (detalle)
     const alertasStockBajo = await req.models.Product.find({
       estado: 'activo',
@@ -1841,6 +1883,7 @@ app.get('/api/dashboard/stats', authenticateAndLoadModels, async (req, res) => {
       .select('nombre categoria stock stockMinimo')
       .limit(5)
       .lean();
+      
     // 12. Productos más vendidos (últimos 30 días)
     const fecha30DiasAtras = new Date();
     fecha30DiasAtras.setDate(fecha30DiasAtras.getDate() - 30);
@@ -1860,6 +1903,7 @@ app.get('/api/dashboard/stats', authenticateAndLoadModels, async (req, res) => {
       { $sort: { totalVendido: -1 } },
       { $limit: 5 }
     ]);
+
     // 13. Cajeros activos hoy
     const usuariosActivos = await req.models.Sale.aggregate([
       {
@@ -1875,6 +1919,7 @@ app.get('/api/dashboard/stats', authenticateAndLoadModels, async (req, res) => {
       },
       { $sort: { montoVentasHoy: -1 } }
     ]);
+
     // 14. Métodos de pago hoy
     const metodosPagoHoy = await req.models.Sale.aggregate([
       {
@@ -1928,6 +1973,7 @@ app.get('/api/dashboard/stats', authenticateAndLoadModels, async (req, res) => {
     });
   }
 });
+
 // GET /api/dashboard/ventas/:periodo - Ventas por período
 app.get('/api/dashboard/ventas/:periodo', authenticateAndLoadModels, async (req, res) => {
   try {
@@ -1963,6 +2009,7 @@ app.get('/api/dashboard/ventas/:periodo', authenticateAndLoadModels, async (req,
           error: 'Período no válido. Usa: hoy, ayer, semana, mes'
         });
     }
+
     // Ventas por día dentro del período
     const ventasPorDia = await req.models.Sale.aggregate([
       {
@@ -1985,6 +2032,7 @@ app.get('/api/dashboard/ventas/:periodo', authenticateAndLoadModels, async (req,
       },
       { $sort: { "_id": 1 } }
     ]);
+
     // Resumen total del período
     const resumenPeriodo = await req.models.Sale.aggregate([
       {
@@ -2005,6 +2053,7 @@ app.get('/api/dashboard/ventas/:periodo', authenticateAndLoadModels, async (req,
         }
       }
     ]);
+
     // Métodos de pago en el período
     const metodosPagoPeriodo = await req.models.Sale.aggregate([
       {
@@ -2025,6 +2074,7 @@ app.get('/api/dashboard/ventas/:periodo', authenticateAndLoadModels, async (req,
       },
       { $sort: { monto: -1 } }
     ]);
+
     // Top productos del período
     const topProductosPeriodo = await req.models.Sale.aggregate([
       {
@@ -2070,6 +2120,7 @@ app.get('/api/dashboard/ventas/:periodo', authenticateAndLoadModels, async (req,
     });
   }
 });
+
 // GET /api/dashboard/productos-mas-vendidos/:limite
 app.get('/api/dashboard/productos-mas-vendidos/:limite?', authenticateAndLoadModels, async (req, res) => {
   try {
@@ -2096,6 +2147,7 @@ app.get('/api/dashboard/productos-mas-vendidos/:limite?', authenticateAndLoadMod
       { $sort: { cantidadTotal: -1 } },
       { $limit: limite }
     ]);
+
     // Si quieres incluir información del producto actual
     const productosConInfo = await Promise.all(
       productosMasVendidos.map(async (producto) => {
@@ -2129,11 +2181,13 @@ app.get('/api/dashboard/productos-mas-vendidos/:limite?', authenticateAndLoadMod
     });
   }
 });
+
 // GET /api/dashboard/alertas - Alertas del sistema
 app.get('/api/dashboard/alertas', authenticateAndLoadModels, async (req, res) => {
   try {
     const hoy = new Date();
     const alertas = [];
+
     // 1. Alertas de stock bajo
     const productosStockBajo = await req.models.Product.find({
       stock: { $lte: "$stockMinimo" },
@@ -2150,6 +2204,7 @@ app.get('/api/dashboard/alertas', authenticateAndLoadModels, async (req, res) =>
         prioridad: 1
       });
     }
+
     // 2. Alertas de productos agotados
     const productosAgotados = await req.models.Product.find({
       stock: 0,
@@ -2166,6 +2221,7 @@ app.get('/api/dashboard/alertas', authenticateAndLoadModels, async (req, res) =>
         prioridad: 0
       });
     }
+
     // 3. Ventas con problemas (opcional)
     const ventasProblema = await req.models.Sale.find({
       estado: { $in: ['pendiente', 'reembolsada'] }
@@ -2181,6 +2237,7 @@ app.get('/api/dashboard/alertas', authenticateAndLoadModels, async (req, res) =>
         prioridad: 2
       });
     }
+
     // 4. Clientes sin compras recientes (más de 30 días)
     const fecha30DiasAtras = new Date();
     fecha30DiasAtras.setDate(fecha30DiasAtras.getDate() - 30);
@@ -2216,6 +2273,7 @@ app.get('/api/dashboard/alertas', authenticateAndLoadModels, async (req, res) =>
     });
   }
 });
+
 // GET /api/dashboard/metodos-pago - Métodos de pago por período
 app.get('/api/dashboard/metodos-pago', authenticateAndLoadModels, async (req, res) => {
   try {
@@ -2265,6 +2323,7 @@ app.get('/api/dashboard/metodos-pago', authenticateAndLoadModels, async (req, re
       },
       { $sort: { montoTotal: -1 } }
     ]);
+    
     // Calcular porcentajes
     const totalMonto = metodosPago.reduce((sum, item) => sum + item.montoTotal, 0);
     const metodosConPorcentaje = metodosPago.map(item => ({
@@ -2288,6 +2347,7 @@ app.get('/api/dashboard/metodos-pago', authenticateAndLoadModels, async (req, re
     });
   }
 });
+
 // ==================== RUTAS DE DEBUG Y VERIFICACIÓN ====================
 app.get('/api/debug/check-auth', authenticateAndLoadModels, async (req, res) => {
   try {
@@ -2382,6 +2442,7 @@ app.get('/', (req, res) => {
     }
   });
 });
+
 // Middleware para manejar errores 404
 app.use((req, res) => {
   res.status(404).json({
@@ -2389,6 +2450,7 @@ app.use((req, res) => {
     error: 'Ruta no encontrada'
   });
 });
+
 // Middleware para manejar errores
 app.use((err, req, res, next) => {
   console.error('❌ Error no manejado:', err);
@@ -2398,18 +2460,5 @@ app.use((err, req, res, next) => {
     details: process.env.NODE_ENV === 'development' ? err.message : undefined
   });
 });
-// Iniciar servidor
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`\n🚀 Servidor corriendo en http://localhost:${PORT}`);
-  console.log('🔧 Sistema multi-tenant activado');
-  console.log('🏪 Cada nuevo registro crea una base de datos independiente');
-  console.log('\n📋 Endpoints disponibles:');
-  console.log(' POST /api/register - Registrar nuevo usuario y crear tienda');
-  console.log(' POST /api/login - Iniciar sesión');
-  console.log(' GET /api/products - Obtener productos (requiere auth)');
-  console.log(' POST /api/products - Crear producto (requiere auth)');
-  console.log(' POST /api/sales - Crear venta');
-  console.log(' GET /api/sales/today - Ventas de hoy');
-  console.log(' GET /api/health - Verificar estado del sistema\n');
-});
+
+
