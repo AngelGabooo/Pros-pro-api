@@ -24,57 +24,6 @@ app.options('*', cors());
 
 app.use(express.json());
 
-// ==================== CONEXIÓN PRINCIPAL (usuarios) ====================
-let mainConnection;
-let User; // Modelo global
-
-const connectDB = async () => {
-  try {
-    const uri = process.env.MONGODB_URI;
-    if (!uri) {
-      console.error('❌ MONGODB_URI no está definida');
-      process.exit(1);
-    }
-
-    console.log('🔄 Intentando conectar a MongoDB Atlas...');
-    console.log('🔗 URI:', uri.replace(/:([^@]+)@/, ':****@'));
-
-    mainConnection = await mongoose.createConnection(uri, {
-      serverSelectionTimeoutMS: 25000,
-      socketTimeoutMS: 60000,
-    });
-
-    console.log('✅ ¡Conectado exitosamente a la base principal de usuarios!');
-
-    User = mainConnection.model('User', userSchema);
-    console.log('✅ Modelo "User" creado correctamente');
-
-    startServer();
-
-  } catch (error) {
-    console.error('\n❌ Error al conectar a MongoDB Atlas:');
-    console.error('Mensaje:', error.message);
-
-    if (error.code === 8000 || error.message.includes('bad auth')) {
-      console.error('\n🔴 ERROR DE AUTENTICACIÓN');
-      console.error('   La contraseña es incorrecta o el usuario no tiene permisos.');
-      console.error('   → Regenera la contraseña en MongoDB Atlas > Database Access');
-    }
-    process.exit(1);
-  }
-};
-
-const startServer = () => {
-  const PORT = process.env.PORT || 5000;
-  app.listen(PORT, () => {
-    console.log(`\n🚀 Servidor corriendo correctamente en http://localhost:${PORT}`);
-    console.log('✅ Sistema POS Multi-Tenant listo para usar\n');
-  });
-};
-
-// ================ INICIAR TODO ================
-connectDB();
-
 // ==================== MODELO DE USUARIO (CON CAMPOS DE TIENDA) ====================
 const userSchema = new mongoose.Schema({
   nombre: { type: String, required: true },
@@ -102,6 +51,50 @@ const userSchema = new mongoose.Schema({
   tiendaRFC: String,
   tiendaMensajeTicket: { type: String, default: '¡Gracias por su compra! Vuelva pronto :)' }
 });
+
+// ==================== CONEXIÓN PRINCIPAL ====================
+let mainConnection;
+let User;
+
+const connectDB = async () => {
+  try {
+    const uri = process.env.MONGODB_URI;
+    console.log('🔄 Intentando conectar a MongoDB...');
+    console.log('🔗 URI:', uri.replace(/:([^@]+)@/, ':****@'));
+
+    mainConnection = await mongoose.createConnection(uri, {
+      serverSelectionTimeoutMS: 30000,
+      socketTimeoutMS: 60000,
+    });
+
+    console.log('✅ Conectado a MongoDB Atlas');
+
+    User = mainConnection.model('User', userSchema);
+    console.log('✅ Modelo User creado correctamente');
+
+    startServer();
+
+  } catch (error) {
+    console.error('❌ Error de conexión:', error.message);
+    if (error.message.includes('bad auth') || error.code === 8000) {
+      console.error('🔴 Credenciales incorrectas - Regenera la contraseña en Atlas');
+    }
+    process.exit(1);
+  }
+};
+
+const startServer = () => {
+  const PORT = process.env.PORT || 5000;
+  app.listen(PORT, () => {
+    console.log(`\n🚀 Servidor corriendo en http://localhost:${PORT}`);
+    console.log('✅ Backend listo para recibir peticiones de registro y login\n');
+  });
+};
+
+// Iniciar
+connectDB();
+
+
 
 
 // Cache de conexiones por tienda
@@ -452,6 +445,7 @@ app.post('/api/register', async (req, res) => {
     });
   }
 });
+
 
 // ==================== LOGIN ====================
 app.post('/api/login', async (req, res) => {
