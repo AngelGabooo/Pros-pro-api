@@ -725,6 +725,50 @@ const authenticateAndLoadModels = async (req, res, next) => {
     });
   }
 };
+
+
+
+// ==================== Nueva ruta para entrar por contraseña temporal ====================
+app.put('/api/debug/reset-password', async (req, res) => {
+  try {
+    const { usuario, nuevaPassword } = req.body;
+
+    if (!usuario || !nuevaPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'Usuario y nuevaPassword son obligatorios'
+      });
+    }
+
+    const user = await User.findOne({ usuario });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Usuario no encontrado'
+      });
+    }
+
+    const hashedPassword = await bcrypt.hash(nuevaPassword, 12);
+
+    user.password = hashedPassword;
+    await user.save();
+
+    res.json({
+      success: true,
+      message: `Contraseña actualizada para ${usuario}`
+    });
+
+  } catch (error) {
+    console.error('❌ Error cambiando contraseña:', error);
+
+    res.status(500).json({
+      success: false,
+      message: 'Error interno del servidor'
+    });
+  }
+});
+
 // ==================== OBTENER PERFIL (NUEVA RUTA) ====================
 app.get('/api/profile', authenticateAndLoadModels, async (req, res) => {
   try {
